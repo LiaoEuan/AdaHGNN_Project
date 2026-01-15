@@ -7,12 +7,10 @@ from utils.tools import AvgMeter
 
 class DannTrainer:
     """
-    DANN 训练器。
+    DANN 训练器 (修复版)。
     
-    管理:
-    1. 前向传播与多任务 Loss 计算 (Label + Domain + Constraint)。
-    2. DANN 参数 alpha 的动态调度。
-    3. 指标统计与日志记录。
+    修复内容:
+    - 动态兼容返回 3 个值 (DTU) 和 4 个值 (AVED带音频) 的数据集。
     """
     def __init__(self, model, optimizer, lr_scheduler, config):
         self.model = model
@@ -23,7 +21,6 @@ class DannTrainer:
         self.label_criterion = nn.CrossEntropyLoss()
         self.domain_criterion = nn.CrossEntropyLoss()
         
-        # 初始化指标记录器
         self.metrics = {
             'total_loss': AvgMeter(), 'label_loss': AvgMeter(),
             'domain_loss': AvgMeter(), 'constraint_loss': AvgMeter(),
@@ -34,13 +31,37 @@ class DannTrainer:
     def _reset_metrics(self):
         for m in self.metrics.values(): m.reset()
 
+    def _unpack_batch(self, batch):
+        """
+        [新增] 内部辅助函数：安全地解包 Batch 数据
+        兼容:
+            - DTU: (eeg, labels, domains) -> 3 items
+            - AVED: (eeg, wav, labels, domains) -> 4 items
+        """
+        # 将所有数据移至 GPU
+        batch_data = [d.to(self.config.device) for d in batch]
+        
+        wav = None # 初始化音频为 None
+        
+        if len(batch_data) == 3:
+            # Case 1: DTU (无音频)
+            eeg, labels, domains = batch_data
+        elif len(batch_data) == 4:
+            # Case 2: AVED (有音频)
+            eeg, wav, labels, domains = batch_data
+        else:
+            raise ValueError(f"DataLoader 返回了 {len(batch_data)} 个元素，但 Trainer 只支持 3 或 4 个。")
+            
+        return eeg, wav, labels, domains
+
     def train_epoch(self, dataloader, epoch):
         self.model.train()
         self._reset_metrics()
         
         pbar = tqdm(dataloader, desc=f"Epoch {epoch+1} [Train]")
         for i, batch in enumerate(pbar):
-            eeg, labels, domains = [d.to(self.config.device) for d in batch]
+            # --- 使用辅助函数解包 ---
+            eeg, wav, labels, domains = self._unpack_batch(batch)
             labels = labels.squeeze()
             
             # 动态计算 GRL alpha (0 -> 1)
@@ -49,7 +70,8 @@ class DannTrainer:
             
             self.optimizer.zero_grad()
             
-            # 前向传播
+            # 前向传播 (注意：如果你的模型目前还不支持 wav 输入，这里只需传 eeg)
+            # 如果后续模型升级为多模态，可以在这里传入 wav
             label_logits, domain_logits, c_loss = self.model(eeg, alpha=alpha)
             
             # 计算 Loss
@@ -78,13 +100,13 @@ class DannTrainer:
 
     def test_epoch(self, dataloader, epoch):
         self.model.eval()
-        # 测试时通常只关心 label_acc，但也需要 reset 所有以免报错
         self._reset_metrics() 
         
         pbar = tqdm(dataloader, desc=f"Epoch {epoch+1} [Valid]")
         with torch.no_grad():
             for batch in pbar:
-                eeg, labels, _ = [d.to(self.config.device) for d in batch]
+                # --- 使用辅助函数解包 ---
+                eeg, wav, labels, _ = self._unpack_batch(batch)
                 labels = labels.squeeze()
                 
                 label_logits, _, _ = self.model(eeg, alpha=0)
@@ -96,7 +118,6 @@ class DannTrainer:
                 
                 pbar.set_postfix({'Acc': f"{self.metrics['test_label_acc'].avg:.2%}"})
         
-        # 调度器步进
         if self.lr_scheduler:
             self.lr_scheduler.step(self.metrics['test_label_acc'].avg)
             

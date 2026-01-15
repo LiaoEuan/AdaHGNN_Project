@@ -1,41 +1,41 @@
-# ==============================================================================
-# AdaHGNN 实验配置文件 (AVED Dataset)
-# ==============================================================================
+# configs/dtu_config.yaml
 
 # --- 实验基础设置 ---
-experiment_name: "AdaHGNN_AVED_LOSO"
+experiment_name: "AdaHGNN_DTU_LOSO"
 seed: 3407
-device: "cuda"  # "cuda" or "cpu"
+device: "cuda"
 
 # --- 数据集路径与参数 ---
 dataset:
-  root: "/share/home/yuan/Dataset/AVED/eeg_preproc/audio-only"
-  file_format: "sub{subject}.npz"
-  total_sub: 10
-  num_channels: 32         # 原始EEG通道数
-  time_sample_num: 128     # 1秒数据的采样点数 (128Hz)
-  patch_size: 8            # 时间分块大小
+  name: "DTU"                   # [新增] 标识数据集名称
+  root: "/share/workspace/shared_datasets/DTU"
+  file_format: "S{subject}_Dataset_1s.npz"
+  save_dir: "./results_AdaHGNN_DTU"
+  total_sub: 18                 # DTU有18个被试
+  num_channels: 64              # 实际使用的通道数 (切片后)
+  time_sample_num: 128          # 128Hz
+  patch_size: 16                # DTU推荐 Patch Size (128/16=8个patch)
 
 # --- 训练超参数 ---
 train:
   batch_size: 60
-  epochs: 50
+  epochs: 30                    # DTU通常收敛较快，30轮即可
   lr: 0.0001
   weight_decay: 0.001
-  patience: 10             # 学习率衰减耐心值
-  factor: 0.5              # 学习率衰减因子
+  patience: 10
+  factor: 0.5
   num_workers: 8
 
 # --- 模型架构参数 ---
 model:
-  d_model: 128             # 内部特征维度
-  num_classes: 2           # AAD 分类类别数
+  d_model: 128
+  num_classes: 2
   dropout: 0.5
-  k_neighbors: 5           # 超图构建时的近邻数 (Top-K)
+  k_neighbors: 5
   
   # 损失函数权重
-  lambda_constraint: 1.0       # 总体约束损失权重 (Config中原始命名)
-  constraint_loss_lambda: 1.0  # NHC内部节点/超边损失权重
+  lambda_constraint: 0.1       # DTU代码中设置为 0.1 (AVED是1.0)
+  constraint_loss_lambda: 1.0  
   
   # 超图构建参数
   hgnn_alpha: 3.0

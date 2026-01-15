@@ -1,0 +1,18 @@
+========================================================
+Job ID: 11385
+Node:   gpu02
+Start:  Thu Jan 15 18:55:27 CST 2026
+--------------------------------------------------------
+Working Dir: /share/home/yuan/LY/AdaHGNN_Project
+✅ Environment 'hgnn' activated. Python: /share/software/anaconda3/2024.10/bin/python
+--------------------------------------------------------
+Starting Training...
+>>> Info: Using AVED 32-Channel Anatomical Mapping.
+Random Seed set to: 3407
+>>> 正在使用 AVED 数据集加载器
+
+==================== Validating Subject 1 ====================
+LOSO Fold: Training on 9 subjects, Validating on subject 1.
+Dataset Sizes - Train: 21888, Valid: 2432
+EEG_AdaMSHyper Parameters: 0.802475M
+▲ New Best Acc: 0.5000

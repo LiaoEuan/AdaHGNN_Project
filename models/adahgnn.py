@@ -117,26 +117,47 @@ class EEG_AdaMSHyper(nn.Module):
             hg_struct = hg_structures[i]
             n_nodes = self.scale_node_nums[i]
             
-            # 构建 DHG 对象
+            # --- a. 构建当前尺度的DHG对象 (修复部分) ---
             hg = dhg.Hypergraph(n_nodes, device=x.device)
-            if hg_struct.numel() > 0:
-                # 兼容不同版本 DHG API
-                try: hg.add_hyperedges_from_feature_tensor('hyperedge_index', hg_struct)
-                except: hg.add_edges_from_pairing(hg_struct.t().cpu().numpy())
             
-            # 卷积
+            if hg_struct.numel() > 0:
+                # 修复 AttributeError: 手动解析结构张量并使用通用的 add_hyperedges
+                # hg_struct 形状为 [2, E]，第一行是节点索引，第二行是超边索引
+                
+                # 转为 CPU list 处理 (Python 字典分组效率较高)
+                struct_list = hg_struct.t().cpu().tolist() # [[node_idx, edge_idx], ...]
+                
+                # 按超边索引分组节点
+                edge_groups = {}
+                for node_idx, edge_idx in struct_list:
+                    if edge_idx not in edge_groups:
+                        edge_groups[edge_idx] = []
+                    edge_groups[edge_idx].append(node_idx)
+                
+                # 转换为 dhg 需要的 list of lists 格式: [[n1, n2], [n3, n4, n5], ...]
+                e_list = list(edge_groups.values())
+                
+                # 添加超边
+                if len(e_list) > 0:
+                    hg.add_hyperedges(e_list)
+            
+            # --- b. 卷积 ---
             updated_feats, loss = self.conv_layers[i](curr_node_feats, hg)
             total_loss += loss
             
-            # 提取超边特征 (用于尺度间交互)
+            # --- c. 提取超边特征 (用于尺度间交互) ---
             if hg.num_e > 0:
-                try: scale_he_feats.append(hg.v2e(updated_feats, aggr="mean"))
-                except: pass # 忽略 Batch 错误
+                try: 
+                    # v2e: 从节点聚合特征到超边
+                    scale_he_feats.append(hg.v2e(updated_feats, aggr="mean"))
+                except Exception: 
+                    # 防止特定情况下的 API 兼容问题或 Batch 维度问题
+                    pass 
             
-            # 记录图级特征
+            # --- d. 记录图级特征 ---
             scale_node_outs.append(updated_feats.mean(dim=1))
             
-            # 空间池化
+            # --- e. 空间池化 ---
             if i < self.num_scales - 1:
                 curr_node_feats = self.spatial_pooling_layers[i](updated_feats)
                 
@@ -146,6 +167,7 @@ class EEG_AdaMSHyper(nn.Module):
             attn_out, _ = self.inter_scale_attention(all_he, all_he, all_he)
             pooled_he = self.inter_scale_norm(all_he + attn_out).mean(dim=1)
         else:
+            # 如果没有提取到超边特征，使用零向量占位
             pooled_he = torch.zeros(x.shape[0], self.d_model, device=x.device)
             
         # 5. 最终融合与分类

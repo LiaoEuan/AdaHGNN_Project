@@ -30,7 +30,6 @@ def run_loso_fold(train_loader, valid_loader, config, num_domains, val_subject_i
         optimizer, mode="max", 
         patience=config.train.patience, 
         factor=config.train.factor, 
-        verbose=True
     )
     
     trainer = DannTrainer(model, optimizer, scheduler, config)
@@ -47,8 +46,9 @@ def run_loso_fold(train_loader, valid_loader, config, num_domains, val_subject_i
         curr_acc = test_metrics['test_label_acc'].avg
         info = {
             'epoch': epoch + 1,
-            'train_acc': train_metrics['label_acc'].avg,
-            'valid_acc': curr_acc,
+            'train_label_acc': train_metrics['label_acc'].avg, 
+            'train_domain_acc': train_metrics['domain_acc'].avg,
+            'test_label_acc': curr_acc,  
             'train_loss': train_metrics['total_loss'].avg,
             'lr': get_lr(optimizer)
         }

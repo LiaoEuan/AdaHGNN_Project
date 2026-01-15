@@ -11,6 +11,7 @@ device: "cuda"  # "cuda" or "cpu"
 dataset:
   root: "/share/home/yuan/Dataset/AVED/eeg_preproc/audio-only"
   file_format: "sub{subject}.npz"
+  save_dir: "./results_AdaHGNN_AVED"
   total_sub: 10
   num_channels: 32         # 原始EEG通道数
   time_sample_num: 128     # 1秒数据的采样点数 (128Hz)

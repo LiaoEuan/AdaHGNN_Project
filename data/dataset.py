@@ -7,46 +7,70 @@ from torch.utils.data import Dataset, ConcatDataset
 
 class EEGDataset_AVED(Dataset):
     """
-    AVED 数据集的自定义 Dataset 类。
+    AVED 数据集的自定义 Dataset 类 (改进版)。
     
-    功能:
-    1. 加载预处理后的 .npz EEG 数据。
-    2. 执行通道级 Min-Max 归一化。
-    3. 支持训练阶段的随机振幅缩放数据增强。
-    4. 返回 EEG 数据、标签以及用于 DANN 的领域标签 (Domain Label)。
+    改进点:
+    1. 移除了片断级 Min-Max 归一化，保留预处理阶段的 Z-score 分布特征。
+    2. 增加了音频数据 (wav) 的加载，这对 AAD 任务至关重要。
+    3. 修正了 Label 的维度问题。
+    4. 增加了 explicit 的 training 标志来控制数据增强。
     """
-    def __init__(self, root, file_name, domain_label=-1):
+    def __init__(self, root, file_name, domain_label=-1, training=False):
+        """
+        :param root: 数据目录路径
+        :param file_name: .npz 文件名
+        :param domain_label: 领域标签 (用于 DANN，源域通常为 0, 目标域为 1)
+        :param training: bool, 是否为训练模式 (控制数据增强)
+        """
         self.file_path = os.path.join(root, file_name)
-        # 加载数据 (假设数据结构为 {'eeg': [...], 'label': [...]})
-        self.data = np.load(self.file_path)
-        self.eeg_data = self.data['eeg']
-        self.event = self.data['label']
         
-        # DANN 所需的领域标签，验证集通常设为 -1
+        # 加载数据 (需确保预处理脚本保存了 'eeg', 'label', 'wav')
+        # 使用 allow_pickle=True 以防 numpy 版本兼容性问题
+        self.data = np.load(self.file_path, allow_pickle=True)
+        
+        self.eeg_data = self.data['eeg']   # Shape: [N, Time, Channels]
+        self.wav_data = self.data['wav']   # Shape: [N, Time, 1] 或 [N, Time]
+        self.event = self.data['label']    # Shape: [N]
+        
+        # DANN 领域标签
         self.domain_label = torch.tensor(domain_label, dtype=torch.long)
+        self.training = training
+
+        # 校验数据长度一致性
+        assert len(self.eeg_data) == len(self.wav_data) == len(self.event), \
+            f"Data length mismatch in {file_name}"
 
     def __len__(self):
         return len(self.eeg_data)
 
     def __getitem__(self, idx):
-        # 1. 加载原始数据并转置: [Time, Channel] -> [Channel, Time]
+        # 1. 处理 EEG 数据
+        # 原始 shape: [Time, Channel] -> 转换后: [Channel, Time] (符合 PyTorch Conv1d 习惯)
+        # 注意：这里直接使用预处理好的 Z-score 数据，不再做 Min-Max
         eeg = torch.tensor(self.eeg_data[idx], dtype=torch.float32).permute(1, 0)
         
-        # 2. 通道级 Min-Max 归一化 (缩放到 [0, 1])
-        epsilon = 1e-8
-        eeg_min, _ = torch.min(eeg, dim=1, keepdim=True)
-        eeg_max, _ = torch.max(eeg, dim=1, keepdim=True)
-        eeg = (eeg - eeg_min) / (eeg_max - eeg_min + epsilon)
+        # 2. 处理音频数据
+        # 同样转换为 [Audio_Channel, Time] (通常 Audio_Channel=1)
+        wav = torch.tensor(self.wav_data[idx], dtype=torch.float32)
+        if wav.dim() == 1:
+            wav = wav.unsqueeze(0) # [Time] -> [1, Time]
+        else:
+            wav = wav.permute(1, 0) # [Time, 1] -> [1, Time]
 
-        # 3. 数据增强: 随机振幅缩放 (仅在训练集/已知领域标签时应用)
-        if self.domain_label != -1:
-            scale_factor = random.uniform(0.8, 1.2)
+        # 3. 数据增强 (仅在训练模式下)
+        # 随机振幅缩放：模拟不同受试者或不同时间的阻抗微小变化
+        if self.training:
+            scale_factor = random.uniform(0.85, 1.15)
             eeg = eeg * scale_factor
+            # 音频通常不需要做振幅缩放，因为它已归一化且是参考信号
 
         # 4. 封装标签
-        event = torch.LongTensor([int(self.event[idx])])
+        # 转换为标量 LongTensor，适应 CrossEntropyLoss
+        event = torch.tensor(self.event[idx], dtype=torch.long)
 
-        return eeg, event, self.domain_label
+        # 返回格式: (EEG输入, 音频输入), 类别标签, 领域标签
+        # 这是一个常见的 Tuple 结构，具体取决于你的 Model forward 接收什么参数
+        return eeg, wav, event, self.domain_label
 
 def get_loso_datasets(config, all_subject_ids, val_subject_id):
     """
@@ -90,7 +114,6 @@ def get_loso_datasets(config, all_subject_ids, val_subject_id):
     print(f"Dataset Sizes - Train: {len(train_dataset)}, Valid: {len(valid_dataset)}")
     
     return train_dataset, valid_dataset, num_domains
-
 
 # ==============================================================================
 #  DTU 数据集类
